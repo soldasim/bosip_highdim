@@ -1,0 +1,10 @@
+include("../src/include_code.jl")
+p = PROBLEMS["wavy_ridge"](10; rotate=true)
+for m in (LatentGP(), OracleGP())
+    (; model) = setup(m, p)
+    data = ExperimentData(rand(prior(p), 12), reduce(hcat, simulator(p).(eachcol(rand(prior(p), 12)))))
+    sampler = BOSS.params_sampler(model, data)
+    ps = sampler()
+    vec_, devec_ = BOSS.vectorizer(model, data)
+    @info method_name(m) length(vec_(ps)) BOSS.data_loglike(model, data)(ps) BOSS.params_logprior(model, data)(ps)
+end

@@ -1,0 +1,6 @@
+data/
+plots/
+Manifest.toml
+.DS_Store
+.vscode/
+notes/

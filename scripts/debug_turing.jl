@@ -1,0 +1,55 @@
+include("../src/include_code.jl")
+
+function debug_turing(method=SaasBI(); d=10)
+    p = wavy_banana_problem(d; rotate=false)
+    (; model) = setup(method, p)
+    X = rand(prior(p), 20)
+    Y = reduce(hcat, simulator(p).(eachcol(X)))
+    data = ExperimentData(X, Y)
+    slice_model = BOSS.slice(model, 1)
+    pp = BOSS.ModelParamsPrior(slice_model, data)
+    x = rand(pp)
+    @info "prior sample" length(pp) x
+    b = Bijectors.bijector(pp)
+    y = b(x)
+    @info "roundtrip err" maximum(abs, Bijectors.inverse(b)(y) .- x)
+    @info "logpdf" logpdf(pp, x)
+    vec_, devec_ = BOSS.vectorizer(slice_model, data)
+    params = BOSS.params_sampler(slice_model, data)()
+    @info "devec" devec_(params, x)
+    return pp
+end
+
+function debug_turing2(method=SaasBI(); d=10)
+    p = wavy_banana_problem(d; rotate=false)
+    (; model) = setup(method, p)
+    X = rand(prior(p), 20)
+    Y = reduce(hcat, simulator(p).(eachcol(X)))
+    data = ExperimentData(X, Y)
+    sm = BOSS.slice(model, 1)
+    pp = BOSS.ModelParamsPrior(sm, data)
+    vec_, devec_ = BOSS.vectorizer(sm, data)
+    params = BOSS.params_sampler(sm, data)()
+    dll = BOSS.data_loglike(sm, data)
+    x = rand(pp)
+    @info "plain eval" dll(devec_(params, x))
+    @info "dual eval" dll(devec_(params, BOSS.ForwardDiff.Dual.(x, 1.)))
+    g = BOSS.ForwardDiff.gradient(z -> dll(devec_(params, z)), x)
+    @info "grad" g
+end
+
+function debug_turing3(method=SaasBI(); d=10)
+    p = wavy_banana_problem(d; rotate=false)
+    (; model) = setup(method, p)
+    X = rand(prior(p), 20)
+    Y = reduce(hcat, simulator(p).(eachcol(X)))
+    data = ExperimentData(X, Y)
+    sm = BOSS.slice(model, 1)
+    pp = BOSS.ModelParamsPrior(sm, data)
+    vec_, devec_ = BOSS.vectorizer(sm, data)
+    params = BOSS.params_sampler(sm, data)()
+    x = rand(pp)
+    xd = BOSS.ForwardDiff.Dual.(x, 1.)
+    q = devec_(params, xd)
+    @info "dual devec" q.σ q.α q.λ[1:2]
+end
