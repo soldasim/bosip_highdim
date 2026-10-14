@@ -6,9 +6,14 @@ const INK = "#0b0b0b"
 const INK2 = "#52514e"
 const GRID = "#e6e5e1"
 const COLORS = Dict("baseline" => "#2a78d6", "saas_map" => "#eb6834", "dsp_map" => "#1baf7a", "saas_bi" => "#eda100",
-    "latent_k3" => "#7b4fd1", "latent_ktrue" => "#c2368a", "oracle_gp" => "#0b0b0b")
+    "latent_k3" => "#7b4fd1", "latent_ktrue" => "#c2368a", "oracle_gp" => "#0b0b0b",
+    "linenc_k3" => "#7b4fd1", "linenc_ktrue" => "#c2368a", "linenc_oracle" => "#52514e", "oracle_dsp" => "#0b0b0b")
 const LABELS = Dict("baseline" => "Baseline GP", "saas_map" => "SAAS prior, MAP", "dsp_map" => "Dimension-scaled prior, MAP", "saas_bi" => "SAAS prior, NUTS",
-    "latent_k3" => "Learned linear encoder, k=3", "latent_ktrue" => "Learned linear encoder, k=true", "oracle_gp" => "Oracle (true structure)")
+    "latent_k3" => "Learned linear encoder, k=3", "latent_ktrue" => "Learned linear encoder, k=true", "oracle_gp" => "Oracle (true structure)",
+    "linenc_k3" => "Linear encoder (capped), k=3", "linenc_ktrue" => "Linear encoder (capped), k=true", "linenc_oracle" => "Oracle with capped linear map", "oracle_dsp" => "Oracle (DS-GP in true subspace)")
+for f in ("latent_k3", "latent_ktrue"); LABELS[f] = replace(LABELS[f], "Learned linear encoder" => "Linear encoder (uncapped)"); end
+LABELS["oracle_gp"] = "Oracle (true structure, uncapped map)"
+LABELS["dsp_map"] = "DS-GP"; LABELS["saas_map"] = "SAAS GP"
 for f in ("baseline", "saas_map", "dsp_map")
     COLORS[f * "_cap"] = COLORS[f]
     LABELS[f * "_cap"] = LABELS[f]
@@ -16,11 +21,16 @@ end
 const RELEVANT_DIMS = Dict("wavy_ridge" => " (1 relevant)", "wavy_multimodal" => " (2 relevant)", [n * "_emb" => " (2 relevant)" for n in ("ab", "simple", "banana", "bimodal")]...)
 const PROBLEMS_PLOT = ["wavy_ridge", "wavy_banana", "wavy_multimodal"]
 
-method_family(m) = occursin("_cap", m) ? method_family(replace(m, r"_cap[\d.]+$" => "")) * "_cap" : startswith(m, "latent") ? m : m == "oracle_gp" ? m : startswith(m, "saas_map") ? "saas_map" : startswith(m, "dsp_map") ? "dsp_map" : startswith(m, "saas_bi") ? "saas_bi" : "baseline"
+method_family(m) = occursin("_cap", m) ? method_family(replace(m, r"_cap[\d.]+$" => "")) * "_cap" : startswith(m, "latent") || startswith(m, "linenc") ? m : m in ("oracle_gp", "oracle_dsp") ? m : startswith(m, "saas_map") ? "saas_map" : startswith(m, "dsp_map") ? "dsp_map" : startswith(m, "saas_bi") ? "saas_bi" : "baseline"
 problem_base(name) = replace(name, r"_d\d+(_aligned)?$" => "")
 is_aligned(name) = endswith(name, "_aligned")
 
 load_results(dir="data") = reduce(vcat, [load(joinpath(dir, f), "results") for f in sort(readdir(dir)) if occursin(r"^pilot_curves.*\.jld2$", f)]; init=Any[])
+
+const ORACLE_FAMILIES = ["oracle_gp", "linenc_oracle", "oracle_dsp"]
+# Uncapped (A) encoder results, drawn dashed for comparison only.
+const OLD_FAMILIES = ["latent_k3", "latent_ktrue"]
+isdashed(fam, dashed_caps) = dashed_caps ? endswith(fam, "_cap") : fam in OLD_FAMILIES
 
 "Median and range over seeds at each score checkpoint `n`."
 function aggregate(rs, field)
@@ -49,7 +59,7 @@ a panel is drawn for every problem in every row.
 """
 function plot_curves(results; field=:sliced_wasserstein, problems=PROBLEMS_PLOT, ylabel="sliced Wasserstein distance (lower is better)",
     logy=true, file="plots/convergence_sw", families_shown=["baseline", "saas_map", "dsp_map", "saas_bi"],
-    rows=[("axis-aligned", true, problems), ("rotated", false, problems)], ylims_log=(0.02, 4), dashed_caps=true, title="Posterior quality vs. simulation budget (median over seeds, band = min–max)")
+    rows=[("axis-aligned", true, problems), ("rotated", false, problems)], ylims_log=(0.02, 4), dashed_caps=true, note=nothing, title="Posterior quality vs. simulation budget (median over seeds, band = min–max)")
     ncols = maximum(length(r[3]) for r in rows)
     fig = Figure(; size = (max(320 * ncols + 60, 1000), 320 * length(rows)), backgroundcolor = SURFACE, figure_padding = (16, 16, 12, 12))
     present = unique(method_family(r.key[2]) for r in results)
@@ -67,17 +77,19 @@ function plot_curves(results; field=:sliced_wasserstein, problems=PROBLEMS_PLOT,
         for fam in families
             rs = [r for r in results if problem_base(r.key[1]) == prob && is_aligned(r.key[1]) == aligned && method_family(r.key[2]) == fam && !isempty(r.scores)]
             isempty(rs) && continue
+            fam in ORACLE_FAMILIES && endswith(prob, "_sum") && continue
             ns, med, lo, hi = aggregate(rs, field)
             isempty(ns) && continue
             band!(ax, ns, lo, hi; color = (COLORS[fam], 0.16))
-            lines!(ax, ns, med; color = COLORS[fam], linewidth = 2, linestyle = dashed_caps && endswith(fam, "_cap") ? :dash : :solid)
+            lines!(ax, ns, med; color = COLORS[fam], linewidth = 2, linestyle = isdashed(fam, dashed_caps) ? :dash : :solid)
         end
         xlims!(ax, 18, 215)
     end
     Label(fig[2:length(rows)+1, 0], ylabel; rotation = pi / 2, color = INK2, fontsize = 12)
-    elems = [LineElement(color = COLORS[f], linewidth = 2, linestyle = dashed_caps && endswith(f, "_cap") ? :dash : :solid) for f in families]
+    elems = [LineElement(color = COLORS[f], linewidth = 2, linestyle = isdashed(f, dashed_caps) ? :dash : :solid) for f in families]
     Legend(fig[1, 1:ncols], elems, [LABELS[f] for f in families];
         orientation = :horizontal, nbanks = ncols == 1 ? 2 : (length(families) > 5 ? 2 : 1), framevisible = false, labelcolor = INK2, labelsize = 12, halign = :left)
+    isnothing(note) || Label(fig[0, 1:ncols], note; color = "#d62728", fontsize = 12, halign = :right, font = :bold)
     Label(fig[0, 1:ncols], title; color = INK, fontsize = 15, halign = :left, font = :bold)
     mkpath(dirname(file))
     save(file * ".png", fig; px_per_unit = 2)
@@ -124,7 +136,17 @@ const CAP_FAMILIES =["baseline", "baseline_cap", "saas_map", "saas_map_cap", "ds
 "Paper problems: lengthscale-capped (dashed) vs. uncapped (solid) baseline, SAAS and DSP priors."
 plot_capped(; kwargs...) = plot_paper_problems(; families_shown = CAP_FAMILIES, file = "plots/convergence_paper_capped", kwargs...)
 
-const TRUNCATED_FAMILIES = ["baseline_cap", "saas_map_cap", "dsp_map_cap", "latent_k3", "latent_ktrue", "oracle_gp"]
+const TRUNCATED_FAMILIES = ["baseline_cap", "saas_map_cap", "dsp_map_cap", "linenc_k3", "linenc_ktrue", "linenc_oracle", "latent_k3", "latent_ktrue", "oracle_gp"]
 "Six problems with the lengthscale-truncated variants only."
 plot_six_truncated(; kwargs...) = plot_six(; families_shown = TRUNCATED_FAMILIES, file = "plots/convergence_six_truncated", dashed_caps = false,
-    title = "Six problems in 10D: posterior quality vs. budget (median, band = min–max; GP lengthscale priors truncated at 5×width)", kwargs...)
+    title = "Six problems in 10D: posterior quality vs. budget (median, band = min–max; GP lengthscale priors truncated at 5×width; dashed = uncapped linear encoder)", kwargs...)
+
+const PRIOR_FAMILIES = ["baseline_cap", "saas_map_cap", "dsp_map_cap"]
+"Six problems: lengthscale priors (Baseline, SAAS, DS-GP), all truncated at 5×width."
+plot_six_priors(; kwargs...) = plot_six(; families_shown = PRIOR_FAMILIES, file = "plots/convergence_six_priors", dashed_caps = false,
+    title = "Lengthscale priors (truncated at 5×width): posterior quality vs. budget (median, band = min–max)", kwargs...)
+
+const ENCODER_FAMILIES = ["dsp_map_cap", "linenc_k3", "linenc_ktrue", "latent_k3", "latent_ktrue", "oracle_gp"]
+"Six problems: DS-GP reference, linear encoders (capped solid, uncapped dashed) and the oracle (not on additive problems, where it equals DS-GP)."
+plot_six_encoders(; kwargs...) = plot_six(; note = "Oracle: old data (learned k×k map, uncapped); to be replaced by DS-GP in the true subspace.", families_shown = ENCODER_FAMILIES, file = "plots/convergence_six_encoders", dashed_caps = false,
+    title = "DS-GP vs. linear encoders (dashed = uncapped) and oracle: posterior quality vs. budget (median, band = min–max)", kwargs...)

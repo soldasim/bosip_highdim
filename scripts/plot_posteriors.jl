@@ -41,10 +41,10 @@ function plot_posteriors(; method="dsp_map", seed=1, file="plots/posterior_$(rep
     return fig
 end
 
-const POSTERIOR_METHODS = ["baseline", "saas_map_a0.1", "dsp_map", "baseline_cap5.0", "saas_map_a0.1_cap5.0", "dsp_map_cap5.0", "latent_k3", "latent_ktrue", "oracle_gp"]
+const POSTERIOR_METHODS = ["baseline", "saas_map_a0.1", "dsp_map", "baseline_cap5.0", "saas_map_a0.1_cap5.0", "dsp_map_cap5.0", "linenc_k3", "linenc_ktrue", "linenc_oracle", "latent_k3", "latent_ktrue", "oracle_gp"]
 "One posterior figure per BOSIP variant."
 plot_all_posteriors(; kwargs...) = foreach(m -> plot_posteriors(; method = m, kwargs...), POSTERIOR_METHODS)
 
-const TRUNCATED_METHODS = ["baseline_cap5.0", "saas_map_a0.1_cap5.0", "dsp_map_cap5.0", "latent_k3", "latent_ktrue", "oracle_gp"]
+const TRUNCATED_METHODS = ["baseline_cap5.0", "saas_map_a0.1_cap5.0", "dsp_map_cap5.0", "linenc_k3", "linenc_ktrue", "linenc_oracle", "latent_k3", "latent_ktrue", "oracle_gp"]
 "Posterior figures for the lengthscale-truncated variants only."
 plot_truncated_posteriors(; kwargs...) = foreach(m -> plot_posteriors(; method = m, kwargs...), TRUNCATED_METHODS)

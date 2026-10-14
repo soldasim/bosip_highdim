@@ -3,6 +3,8 @@
 BOSIP experiments in 10D with about 200 simulations, where only a few input dimensions affect the likelihood.
 The question is whether low-dimensional or latent GP surrogates and better GP lengthscale priors recover the posterior (all modes and the rough shape).
 
+Notes and preliminary results: [Overleaf project](https://www.overleaf.com/project/6ace240a89a96a705908b461).
+
 ## Setup
 
 Built on [BOSS.jl](https://github.com/soldasim/BOSS.jl) and [BOSIP.jl](https://github.com/soldasim/BOSIP.jl), both taken from their `dev` branches (see `[sources]` in `Project.toml`).

@@ -39,8 +39,34 @@ struct LatentGP <: Method
 end
 LatentGP(; k=3) = LatentGP(k)
 
+"""
+GP on a learned linear encoder `z = W x` with all effective lengthscales at most `cap` domain widths
+(the metric `WᵀW + I / (cap w)²`). `k = nothing` uses the true number of informed coordinates. Fitted by MAP.
+"""
+struct LinearEncoder <: Method
+    k::Union{Nothing, Int}
+    cap::Float64
+end
+LinearEncoder(; k=3, cap=5.) = LinearEncoder(k, cap)
+
+"Oracle encoder: learned `k × k` linear map on the true informed subspace, with the lengthscales bounded as in [`LinearEncoder`](@ref)."
+struct OracleEncoder <: Method
+    cap::Float64
+end
+OracleEncoder(; cap=5.) = OracleEncoder(cap)
+
 "Oracle: GP on the true informed subspace `Q[1:k, :] x`, with a learned `k × k` linear map. Fitted by MAP."
 struct OracleGP <: Method end
+
+"""
+Oracle: GP on the true informed coordinates `v = Q[1:k, :] x` with the dimension-scaled lengthscale prior
+(input dimension `k`) truncated at `cap` domain widths. No learned parameters beyond the ARD lengthscales. Fitted by MAP.
+"""
+struct OracleDSP <: Method
+    dsp::DimScaledMAP
+    cap::Float64
+end
+OracleDSP(; cap=5.) = OracleDSP(DimScaledMAP(), cap)
 
 "Wraps `method` and truncates its lengthscale priors at `cap` domain widths."
 struct Capped{M<:Method} <: Method
@@ -52,6 +78,9 @@ method_name(::Baseline) = "baseline"
 method_name(m::Capped) = "$(method_name(m.method))_cap$(m.cap)"
 method_name(m::LatentGP) = "latent_k$(something(m.k, "true"))"
 method_name(::OracleGP) = "oracle_gp"
+method_name(::OracleDSP) = "oracle_dsp"
+method_name(m::LinearEncoder) = "linenc_k$(something(m.k, "true"))"
+method_name(::OracleEncoder) = "linenc_oracle"
 method_name(::DimScaledMAP) = "dsp_map"
 method_name(m::SaasMAP) = "saas_map_a$(m.α)"
 method_name(m::SaasBI) = "saas_bi_a$(m.α)_c$(m.chain_count)w$(m.warmup)"
@@ -69,6 +98,13 @@ function lengthscale_priors(m::DimScaledMAP, p::LatentProblem)
     lb, ub = bounds(p)
     μ = m.μ₀ + log(p.d) / 2 .+ log.(ub .- lb)
     return fill(product_distribution(LogNormal.(μ, m.σ₀)), y_size(p))
+end
+
+function lengthscale_priors(m::OracleDSP, p::LatentProblem)
+    w = 2 * HALF_WIDTH
+    μ = m.dsp.μ₀ + log(p.k) / 2 + log(w)
+    prior = truncated.(LogNormal.(fill(μ, p.k), m.dsp.σ₀), 0., m.cap * w)
+    return fill(product_distribution(prior), y_size(p))
 end
 
 function lengthscale_priors(m::Capped, p::LatentProblem)
@@ -103,11 +139,15 @@ function surrogate_model(method::Method, p::LatentProblem)
 end
 
 latent_dim(m::LatentGP, p::LatentProblem) = something(m.k, p.k)
-latent_dim(::OracleGP, p::LatentProblem) = p.k
-projection(::LatentGP, p::LatentProblem) = Matrix(1.0I, p.d, p.d)
-projection(::OracleGP, p::LatentProblem) = p.Q[1:p.k, :]
+latent_dim(::Union{OracleGP, OracleEncoder}, p::LatentProblem) = p.k
+latent_dim(m::LinearEncoder, p::LatentProblem) = something(m.k, p.k)
+projection(::Union{LatentGP, LinearEncoder}, p::LatentProblem) = Matrix(1.0I, p.d, p.d)
+projection(::Union{OracleGP, OracleEncoder}, p::LatentProblem) = p.Q[1:p.k, :]
 
-function latent_model(method::Union{LatentGP, OracleGP}, p::LatentProblem)
+max_lengthscale(::Method, p::LatentProblem) = Inf
+max_lengthscale(m::Union{LinearEncoder, OracleEncoder}, p::LatentProblem) = m.cap * 2 * HALF_WIDTH
+
+function latent_model(method::Union{LatentGP, OracleGP, LinearEncoder, OracleEncoder}, p::LatentProblem)
     k, P = latent_dim(method, p), projection(method, p)
     width = 2 * HALF_WIDTH
     weight_prior = product_distribution(fill(Normal(0., 3 / width), k * size(P, 1)))
@@ -116,6 +156,7 @@ function latent_model(method::Union{LatentGP, OracleGP}, p::LatentProblem)
         latent_dim = k, projection = P,
         weight_priors = fill(weight_prior, y_size(p)),
         priors.amplitude_priors, priors.noise_std_priors,
+        max_lengthscale = max_lengthscale(method, p),
     )
 end
 
@@ -126,8 +167,22 @@ function additive_model(p::LatentProblem)
     return GaussianProcess(; kernel, gp_priors(p)...)
 end
 
-surrogate_model(method::LatentGP, p::LatentProblem) = latent_model(method, p)
+surrogate_model(method::Union{LatentGP, LinearEncoder, OracleEncoder}, p::LatentProblem) = latent_model(method, p)
+surrogate_model(method::OracleDSP, p::LatentProblem) = (@assert !p.additive; GaussianProcess(;
+    kernel = ProjectedKernel(Matern52Kernel(), p.Q[1:p.k, :]),
+    gp_priors(p)..., lengthscale_priors = lengthscale_priors(method, p)))
 surrogate_model(method::OracleGP, p::LatentProblem) = p.additive ? additive_model(p) : latent_model(method, p)
+
+"""
+Kernel on the fixed projection `P x`; `with_lengthscale` applies the (ARD) lengthscales to the projected inputs.
+"""
+struct ProjectedKernel{K<:Kernel} <: Kernel
+    kernel::K
+    P::Matrix{Float64}
+end
+(k::ProjectedKernel)(x, y) = k.kernel(k.P * x, k.P * y)
+KernelFunctions.with_lengthscale(k::ProjectedKernel, λ::AbstractVector{<:Real}) =
+    with_lengthscale(k.kernel, λ) ∘ LinearTransform(k.P)
 
 function setup(method::Method, p::LatentProblem)
     return (;
