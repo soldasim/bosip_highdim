@@ -12,7 +12,7 @@ const LABELS = Dict("baseline" => "Baseline GP", "saas_map" => "SAAS prior, MAP"
     "latent_k3" => "Learned linear encoder, k=3", "latent_ktrue" => "Learned linear encoder, k=true", "oracle_gp" => "Oracle (true structure)",
     "linenc_k3" => "Linear encoder (capped), k=3", "linenc_ktrue" => "Linear encoder (capped), k=true", "linenc_oracle" => "Oracle with capped linear map", "oracle_dsp" => "Oracle (DS-GP in true subspace)")
 for f in ("latent_k3", "latent_ktrue"); LABELS[f] = replace(LABELS[f], "Learned linear encoder" => "Linear encoder (uncapped)"); end
-LABELS["oracle_gp"] = "Oracle (true structure, uncapped map)"
+LABELS["oracle_gp"] = "Oracle, old (learned k×k map, uncapped)"
 LABELS["dsp_map"] = "DS-GP"; LABELS["saas_map"] = "SAAS GP"
 for f in ("baseline", "saas_map", "dsp_map")
     COLORS[f * "_cap"] = COLORS[f]
@@ -29,7 +29,7 @@ load_results(dir="data") = reduce(vcat, [load(joinpath(dir, f), "results") for f
 
 const ORACLE_FAMILIES = ["oracle_gp", "linenc_oracle", "oracle_dsp"]
 # Uncapped (A) encoder results, drawn dashed for comparison only.
-const OLD_FAMILIES = ["latent_k3", "latent_ktrue"]
+const OLD_FAMILIES = ["latent_k3", "latent_ktrue", "linenc_vae_k3", "linenc_vae_ktrue"]
 isdashed(fam, dashed_caps) = dashed_caps ? endswith(fam, "_cap") : fam in OLD_FAMILIES
 
 "Median and range over seeds at each score checkpoint `n`."
@@ -136,17 +136,25 @@ const CAP_FAMILIES =["baseline", "baseline_cap", "saas_map", "saas_map_cap", "ds
 "Paper problems: lengthscale-capped (dashed) vs. uncapped (solid) baseline, SAAS and DSP priors."
 plot_capped(; kwargs...) = plot_paper_problems(; families_shown = CAP_FAMILIES, file = "plots/convergence_paper_capped", kwargs...)
 
-const TRUNCATED_FAMILIES = ["baseline_cap", "saas_map_cap", "dsp_map_cap", "linenc_k3", "linenc_ktrue", "linenc_oracle", "latent_k3", "latent_ktrue", "oracle_gp"]
+const TRUNCATED_FAMILIES = ["baseline_cap", "saas_map_cap", "dsp_map_cap", "linenc_k3", "linenc_ktrue", "latent_k3", "latent_ktrue", "oracle_dsp"]
 "Six problems with the lengthscale-truncated variants only."
 plot_six_truncated(; kwargs...) = plot_six(; families_shown = TRUNCATED_FAMILIES, file = "plots/convergence_six_truncated", dashed_caps = false,
-    title = "Six problems in 10D: posterior quality vs. budget (median, band = min–max; GP lengthscale priors truncated at 5×width; dashed = uncapped linear encoder)", kwargs...)
+    title = "Six problems in 10D: posterior quality vs. budget (median, band = min–max; GP lengthscale priors truncated at 5×width; dashed = uncapped encoder / old oracle)", kwargs...)
 
 const PRIOR_FAMILIES = ["baseline_cap", "saas_map_cap", "dsp_map_cap"]
 "Six problems: lengthscale priors (Baseline, SAAS, DS-GP), all truncated at 5×width."
 plot_six_priors(; kwargs...) = plot_six(; families_shown = PRIOR_FAMILIES, file = "plots/convergence_six_priors", dashed_caps = false,
     title = "Lengthscale priors (truncated at 5×width): posterior quality vs. budget (median, band = min–max)", kwargs...)
 
-const ENCODER_FAMILIES = ["dsp_map_cap", "linenc_k3", "linenc_ktrue", "latent_k3", "latent_ktrue", "oracle_gp"]
+const ENCODER_FAMILIES = ["dsp_map_cap", "linenc_k3", "linenc_ktrue", "latent_k3", "latent_ktrue", "oracle_dsp"]
 "Six problems: DS-GP reference, linear encoders (capped solid, uncapped dashed) and the oracle (not on additive problems, where it equals DS-GP)."
-plot_six_encoders(; kwargs...) = plot_six(; note = "Oracle: old data (learned k×k map, uncapped); to be replaced by DS-GP in the true subspace.", families_shown = ENCODER_FAMILIES, file = "plots/convergence_six_encoders", dashed_caps = false,
-    title = "DS-GP vs. linear encoders (dashed = uncapped) and oracle: posterior quality vs. budget (median, band = min–max)", kwargs...)
+plot_six_encoders(; kwargs...) = plot_six(; families_shown = ENCODER_FAMILIES, file = "plots/convergence_six_encoders", dashed_caps = false,
+    title = "DS-GP vs. linear encoders and oracle (dashed = uncapped encoder): posterior quality vs. budget (median, band = min–max)", kwargs...)
+
+COLORS["linenc_vae_k3"] = COLORS["linenc_k3"]; COLORS["linenc_vae_ktrue"] = COLORS["linenc_ktrue"]
+LABELS["linenc_vae_k3"] = "Linear encoder (capped) + VAE term, k=3"; LABELS["linenc_vae_ktrue"] = "Linear encoder (capped) + VAE term, k=true"
+
+const VAE_FAMILIES = ["dsp_map_cap", "linenc_k3", "linenc_ktrue", "linenc_vae_k3", "linenc_vae_ktrue"]
+"Six problems: capped linear encoder without (solid) and with (dashed) the VAE term, and DS-GP."
+plot_six_vae(; kwargs...) = plot_six(; families_shown = VAE_FAMILIES, file = "plots/convergence_six_vae", dashed_caps = false,
+    title = "Linear encoder with the VAE term (dashed) vs. without (solid) and DS-GP: posterior quality vs. budget (median, band = min–max)", kwargs...)

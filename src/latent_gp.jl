@@ -10,18 +10,20 @@ If `max_lengthscale` is finite, `x / max_lengthscale` is appended to `z`, so tha
 ## Keywords
 - `projection::AbstractMatrix`: Fixed `m × d` map applied before `W`. Use the identity for a fully learned encoder.
 - `weight_priors`: Per-output priors over the vectorized `W` (length `latent_dim * m`).
+- `vae_weight`: Weight of the VAE terms added to the loss (see [`vae_penalty`](@ref)). Zero disables them.
 """
 struct LatentGaussianProcess{K<:Kernel} <: SurrogateModel
     kernel::K
     latent_dim::Int
     projection::Matrix{Float64}
     floor::Float64
+    vae_weight::Float64
     weight_priors::Vector{<:MultivariateDistribution}
     amplitude_priors::BOSS.AmplitudePriors
     noise_std_priors::BOSS.NoiseStdPriors
 end
-LatentGaussianProcess(; kernel=Matern52Kernel(), latent_dim, projection, weight_priors, amplitude_priors, noise_std_priors, max_lengthscale=Inf) =
-    LatentGaussianProcess(kernel, latent_dim, Matrix{Float64}(projection), 1 / max_lengthscale, weight_priors, amplitude_priors, noise_std_priors)
+LatentGaussianProcess(; kernel=Matern52Kernel(), latent_dim, projection, weight_priors, amplitude_priors, noise_std_priors, max_lengthscale=Inf, vae_weight=0.) =
+    LatentGaussianProcess(kernel, latent_dim, Matrix{Float64}(projection), 1 / max_lengthscale, vae_weight, weight_priors, amplitude_priors, noise_std_priors)
 
 "Parameters of the [`LatentGaussianProcess`](@ref); `W` stores the vectorized encoder matrices as columns."
 struct LatentGaussianProcessParams{
@@ -47,7 +49,7 @@ BOSS.sliceable(::Type{<:LatentGaussianProcess}) = true
 BOSS.dimension_independent_given_parameters(::Type{<:LatentGaussianProcess}) = true
 
 BOSS.slice(m::LatentGaussianProcess, idx::Int) = LatentGaussianProcess(
-    m.kernel, m.latent_dim, m.projection, m.floor, m.weight_priors[idx:idx], m.amplitude_priors[idx:idx], m.noise_std_priors[idx:idx],
+    m.kernel, m.latent_dim, m.projection, m.floor, m.vae_weight, m.weight_priors[idx:idx], m.amplitude_priors[idx:idx], m.noise_std_priors[idx:idx],
 )
 BOSS.slice(p::LatentGaussianProcessParams, idx::Int) =
     LatentGaussianProcessParams(p.W[:, idx:idx], p.α[idx:idx], p.σ[idx:idx])
@@ -56,8 +58,25 @@ BOSS.join_slices(ps::AbstractVector{<:LatentGaussianProcessParams}) =
 
 latent_param_priors(model::LatentGaussianProcess) = vcat(model.weight_priors, model.amplitude_priors, model.noise_std_priors)
 
+"""
+    vae_penalty(E, X, weight)
+
+The negative ELBO of a linear VAE with encoder `q(z|x) = N(E x, I)`, prior `N(0, I)` and a Gaussian linear decoder,
+scaled by `weight` (up to constants). The decoder is profiled out by ridge regression.
+"""
+function vae_penalty(E::AbstractMatrix{<:Real}, X::AbstractMatrix{<:Real}, weight::Real)
+    n = size(X, 2)
+    Z = E * X
+    V = X * Z' / (Z * Z' + n * I)
+    return weight * (sum(abs2, X - V * Z) + n * sum(abs2, V) + sum(abs2, Z))
+end
+
 function BOSS.data_loglike(model::LatentGaussianProcess, data::ExperimentData)
-    ll_slice(w, y, α, σ) = (E = metric_encoder(model, w); BOSS.gp_data_loglike_slice(E * data.X, y, nothing, model.kernel, ones(size(E, 1)), α, σ))
+    function ll_slice(w, y, α, σ)
+        E = metric_encoder(model, w)
+        ll = BOSS.gp_data_loglike_slice(E * data.X, y, nothing, model.kernel, ones(size(E, 1)), α, σ)
+        return iszero(model.vae_weight) ? ll : ll - vae_penalty(encoder(model, w), data.X, model.vae_weight)
+    end
     return params -> sum(ll_slice.(eachcol(params.W), eachrow(data.Y), params.α, params.σ))
 end
 

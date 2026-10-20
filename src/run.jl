@@ -49,7 +49,8 @@ run_dir(p, method, seed) = joinpath("data", p.name, "$(method_name(method))_$(se
 """
     run_experiment(p, method; seed, budget, n_init, sample_count, ref, score_every)
 
-Run BOSIP with `budget` simulations in total (including `n_init`).
+Run BOSIP with `budget` simulations in total (including the initial design).
+The initial design is the stored one if the problem has it (see [`start_points`](@ref)), otherwise `n_init` prior samples.
 If reference samples `ref` are given, the posterior is scored every `score_every` iterations.
 Returns the final `BosipProblem`, posterior samples and the score history.
 """
@@ -67,7 +68,7 @@ function run_experiment(p::LatentProblem, method::Method=Baseline();
     (; model, acquisition, model_fitter, acq_maximizer, sampler, score_sampler) = setup(method, p)
 
     f = simulator(p)
-    X = rand(rng, prior(p), n_init)
+    X = something(start_points(p, seed), rand(rng, prior(p), n_init))
     Y = reduce(hcat, f.(eachcol(X)))
     bosip = BosipProblem(ExperimentData(X, Y);
         f,

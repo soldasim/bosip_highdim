@@ -42,12 +42,14 @@ LatentGP(; k=3) = LatentGP(k)
 """
 GP on a learned linear encoder `z = W x` with all effective lengthscales at most `cap` domain widths
 (the metric `WᵀW + I / (cap w)²`). `k = nothing` uses the true number of informed coordinates. Fitted by MAP.
+If `vae > 0`, the VAE terms of [`vae_penalty`](@ref) are added to the loss with weight `vae` (`0.5` is a unit decoder variance).
 """
 struct LinearEncoder <: Method
     k::Union{Nothing, Int}
     cap::Float64
+    vae::Float64
 end
-LinearEncoder(; k=3, cap=5.) = LinearEncoder(k, cap)
+LinearEncoder(; k=3, cap=5., vae=0.) = LinearEncoder(k, cap, vae)
 
 "Oracle encoder: learned `k × k` linear map on the true informed subspace, with the lengthscales bounded as in [`LinearEncoder`](@ref)."
 struct OracleEncoder <: Method
@@ -79,7 +81,7 @@ method_name(m::Capped) = "$(method_name(m.method))_cap$(m.cap)"
 method_name(m::LatentGP) = "latent_k$(something(m.k, "true"))"
 method_name(::OracleGP) = "oracle_gp"
 method_name(::OracleDSP) = "oracle_dsp"
-method_name(m::LinearEncoder) = "linenc_k$(something(m.k, "true"))"
+method_name(m::LinearEncoder) = "linenc$(iszero(m.vae) ? "" : "_vae")_k$(something(m.k, "true"))"
 method_name(::OracleEncoder) = "linenc_oracle"
 method_name(::DimScaledMAP) = "dsp_map"
 method_name(m::SaasMAP) = "saas_map_a$(m.α)"
@@ -117,8 +119,9 @@ truncate_prior(d::SaasPrior, ub) = SaasPrior(d.scales; α = d.α, grid = d.log_�
 noise_std_priors(m::Capped, p::LatentProblem) = noise_std_priors(m.method, p)
 model_fitter(m::Capped) = model_fitter(m.method)
 
+# `parallel = false`: PRIMA.jl overflows the stack of spawned tasks on Linux.
 model_fitter(::Method) = OptimizationMAP(;
-    algorithm = NEWUOA(), multistart = 2, warm_start = true, parallel = true, rhoend = 1e-4,
+    algorithm = NEWUOA(), multistart = 2, warm_start = true, parallel = false, rhoend = 1e-4,
 )
 model_fitter(m::SaasBI) = TuringBI(;
     sampler = NUTS(m.warmup, 0.65), m.warmup, m.samples_in_chain, m.chain_count, m.leap_size, parallel = true,
@@ -128,7 +131,7 @@ amis_sampler(multistart) = AMISSampler(;
     iters = 10,
     proposal_fitter = BOSIP.AnalyticalFitter(),
     gauss_mix_options = GaussMixOptions(;
-        algorithm = BOBYQA(), multistart, parallel = true,
+        algorithm = BOBYQA(), multistart, parallel = false,
         cluster_ϵs = nothing, rel_min_weight = 1e-8, rhoend = 1e-4,
     ),
 )
@@ -147,6 +150,9 @@ projection(::Union{OracleGP, OracleEncoder}, p::LatentProblem) = p.Q[1:p.k, :]
 max_lengthscale(::Method, p::LatentProblem) = Inf
 max_lengthscale(m::Union{LinearEncoder, OracleEncoder}, p::LatentProblem) = m.cap * 2 * HALF_WIDTH
 
+vae_weight(::Method) = 0.
+vae_weight(m::LinearEncoder) = m.vae
+
 function latent_model(method::Union{LatentGP, OracleGP, LinearEncoder, OracleEncoder}, p::LatentProblem)
     k, P = latent_dim(method, p), projection(method, p)
     width = 2 * HALF_WIDTH
@@ -157,6 +163,7 @@ function latent_model(method::Union{LatentGP, OracleGP, LinearEncoder, OracleEnc
         weight_priors = fill(weight_prior, y_size(p)),
         priors.amplitude_priors, priors.noise_std_priors,
         max_lengthscale = max_lengthscale(method, p),
+        vae_weight = vae_weight(method),
     )
 end
 
@@ -168,21 +175,11 @@ function additive_model(p::LatentProblem)
 end
 
 surrogate_model(method::Union{LatentGP, LinearEncoder, OracleEncoder}, p::LatentProblem) = latent_model(method, p)
-surrogate_model(method::OracleDSP, p::LatentProblem) = (@assert !p.additive; GaussianProcess(;
-    kernel = ProjectedKernel(Matern52Kernel(), p.Q[1:p.k, :]),
-    gp_priors(p)..., lengthscale_priors = lengthscale_priors(method, p)))
+surrogate_model(method::OracleDSP, p::LatentProblem) = ProjectedGaussianProcess(
+    GaussianProcess(; kernel = Matern52Kernel(), gp_priors(p)..., lengthscale_priors = lengthscale_priors(method, p)),
+    p.Q[1:p.k, :],
+)
 surrogate_model(method::OracleGP, p::LatentProblem) = p.additive ? additive_model(p) : latent_model(method, p)
-
-"""
-Kernel on the fixed projection `P x`; `with_lengthscale` applies the (ARD) lengthscales to the projected inputs.
-"""
-struct ProjectedKernel{K<:Kernel} <: Kernel
-    kernel::K
-    P::Matrix{Float64}
-end
-(k::ProjectedKernel)(x, y) = k.kernel(k.P * x, k.P * y)
-KernelFunctions.with_lengthscale(k::ProjectedKernel, λ::AbstractVector{<:Real}) =
-    with_lengthscale(k.kernel, λ) ∘ LinearTransform(k.P)
 
 function setup(method::Method, p::LatentProblem)
     return (;
@@ -190,7 +187,7 @@ function setup(method::Method, p::LatentProblem)
         acquisition = LogMaxVar(),
         model_fitter = model_fitter(method),
         acq_maximizer = OptimizationAM(;
-            algorithm = BOBYQA(), multistart = 2, parallel = true, rhoend = 1e-4,
+            algorithm = BOBYQA(), multistart = 2, parallel = false, rhoend = 1e-4,
         ),
         sampler = amis_sampler(24),
         score_sampler = amis_sampler(8),

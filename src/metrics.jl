@@ -14,7 +14,7 @@ end
 function cached_reference(p::LatentProblem; dir="data", kwargs...)
     file = joinpath(dir, "reference_$(p.name).jld2")
     isfile(file) && return load(file, "samples", "ess")
-    samples, ess = reference_samples(p; kwargs...)
+    samples, ess = isnothing(p.box) ? reference_samples(p; kwargs...) : smc_reference(p; kwargs...)
     mkpath(dir)
     jldsave(file; samples, ess)
     return samples, ess

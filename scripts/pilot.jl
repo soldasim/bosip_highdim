@@ -17,6 +17,9 @@ function subspace_overlap(p::LatentProblem, E::AbstractMatrix)
     return sum(abs2, V' * U) / p.k
 end
 
+lengthscale_summary(p::LatentProblem, ::ProjectedGaussianProcess, params::ProjectedGaussianProcessParams) =
+    lengthscale_summary(p, nothing, params.gp)
+
 function lengthscale_summary(p::LatentProblem, model::LatentGaussianProcess, params::LatentGaussianProcessParams)
     return (; λ_informed = NaN, λ_other = NaN, overlap = mean(subspace_overlap(p, encoder(model, w)) for w in eachcol(params.W)))
 end
