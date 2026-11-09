@@ -15,17 +15,20 @@ julia --project=. -e 'using Pkg; Pkg.instantiate()'
 
 ## Problems
 
-- `src/problem.jl`: `LatentProblem`. The likelihood depends only on the first `k` coordinates of `Q x` (`Q` = identity for axis-aligned, a random rotation otherwise); the other coordinates are prior-dominated. Domain is `[-5, 5]^10`.
-- `src/benchmarks.jl`:
-  - `wavy_ridge` (k=1), `wavy_banana`, `wavy_multimodal` (k=2).
-  - The four analytical problems of the BOSIP paper (`ab`, `simple`, `banana`, `bimodal`) as `<name>_emb` (2 of 10 dims relevant) and `<name>_sum` (additive over 5 coordinate pairs, all 10 relevant, axis-aligned only).
+- `src/problem.jl`: `LatentProblem`. The simulator depends only on `P x` (the first `k` coordinates of `x` for axis-aligned problems, of a random rotation `Q x` otherwise); the other coordinates are prior-dominated. Domain is `[-5, 5]^10`.
+- `src/benchmarks.jl`: wraps the problems of the local [BIPBM.jl](../../bipbm) package into `LatentProblem`s (`[sources]` entry in `Project.toml`).
+  - `sparse-*` problems (`ridge`, `wavy_ridge` (k=1), `banana`, `multimodal`, `wavy_banana`, `wavy_multimodal` (k=2), and the four analytical problems of the BOSIP paper as `<name>_emb`) are low-dimensional problems encoded in 10 dimensions; `<name>_sum` are the `additive-bosip-*` problems (additive over 5 coordinate pairs, all 10 dims relevant).
+  - Simulator, likelihood, prior and the rotation `P` come from BIPBM (`BIPBM.informed_projection`); the modes and amplitude estimates are defined here. `PROBLEMS["banana_emb"](10; rotate)` keeps the old names, so saved data stays valid.
+- `src/hd_problems.jl`: the 5D problems with their own simulators (not in BIPBM).
 
-## Methods (`src/methods.jl`)
+## Methods (`src/methods/`)
+
+Defined in `methods/methods.jl`; the surrogate models they use are in `methods/latent_gp.jl`, `methods/projected_gp.jl` and the SAAS prior in `methods/saas.jl`.
 
 - `Baseline`: default BOSIP GP (inverse-gamma lengthscale priors).
 - `SaasMAP`, `DimScaledMAP`: SAAS and dimension-scaled lengthscale priors, fitted by MAP. `SaasBI`: SAAS fitted by NUTS.
 - `Capped(method, 5.)`: truncates the lengthscale priors of `method` at 5 domain widths. Use the capped variants; uncapped fits reach lengthscales of 10³–10⁶ widths, which are not identifiable and break the final GP variance computation.
-- `LatentGP` (`src/latent_gp.jl`): GP on a learned linear encoder `z = W x` with `k` latent dimensions (`k=3` or the true `k`).
+- `LatentGP` (`src/methods/latent_gp.jl`): GP on a learned linear encoder `z = W x` with `k` latent dimensions (`k=3` or the true `k`).
 - `OracleGP`: GP on the true informed subspace (additive kernel for `_sum` problems).
 
 New variants: subtype `Method` and define `setup(::Method, problem)`.

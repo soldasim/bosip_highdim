@@ -13,7 +13,7 @@ end
 "Squared cosine of the principal angles between the learned subspace and the true informed subspace, averaged."
 function subspace_overlap(p::LatentProblem, E::AbstractMatrix)
     U = Matrix(qr(E').Q)[:, 1:min(size(E, 1), p.d)]
-    V = Matrix(qr(p.Q[1:p.k, :]').Q)[:, 1:p.k]
+    V = Matrix(qr(p.P').Q)[:, 1:p.k]
     return sum(abs2, V' * U) / p.k
 end
 

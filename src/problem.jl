@@ -1,10 +1,10 @@
 """
-Benchmark whose likelihood depends only on the first `k` coordinates of the rotated input `Q * x`.
-The remaining `d - k` directions are prior-dominated.
+Benchmark whose simulator depends on the input `x ∈ [-5, 5]^d` only through the `k` informed coordinates `P * x`.
+The remaining `d - k` directions are prior-dominated. Built from a BIPBM problem by [`latent_problem`](@ref).
 
 ## Fields
-- `g`: map from the `k` informed coordinates to the simulator output.
-- `Q`: orthogonal `d × d` rotation.
+- `sim`: the simulator, a map from `x` to the output.
+- `P`: `k × d` matrix of the informed coordinates (rows of an orthogonal matrix, or the identity).
 - `mode_centers`: true posterior modes in informed coordinates (`k × n_modes`, may be empty).
 - `mode_radius`: a sample within this distance (informed coords) of a center counts as that mode.
 - `Σ_obs`: observation covariance; `nothing` means independent noise with `std_obs`.
@@ -13,12 +13,12 @@ The remaining `d - k` directions are prior-dominated.
   if they differ from the defaults (truncated normal prior, Gaussian likelihood around `z_obs`).
 - `box`: bounds `(lb, ub)` of the original parameters, which the coordinates `[-5, 5]^d` are rescaled from.
 """
-struct LatentProblem{G}
+struct LatentProblem{S}
     name::String
     d::Int
     k::Int
-    g::G
-    Q::Matrix{Float64}
+    sim::S
+    P::Matrix{Float64}
     z_obs::Vector{Float64}
     std_obs::Vector{Float64}
     mode_centers::Matrix{Float64}
@@ -32,8 +32,8 @@ struct LatentProblem{G}
     box::Union{Nothing, Tuple{Vector{Float64}, Vector{Float64}}}
 end
 
-LatentProblem(name, d, k, g, Q, z_obs, std_obs, mode_centers, mode_radius, amp_est, Σ_obs, additive) =
-    LatentProblem(name, d, k, g, Q, z_obs, std_obs, mode_centers, mode_radius, amp_est, Σ_obs, additive, nothing, nothing, nothing, nothing)
+LatentProblem(name, d, k, sim, P, z_obs, std_obs, mode_centers, mode_radius, amp_est, Σ_obs, additive) =
+    LatentProblem(name, d, k, sim, P, z_obs, std_obs, mode_centers, mode_radius, amp_est, Σ_obs, additive, nothing, nothing, nothing, nothing)
 
 const HALF_WIDTH = 5.
 
@@ -43,11 +43,11 @@ likelihood_model(p::LatentProblem) = something(p.likelihood, isnothing(p.Σ_obs)
 obs_distribution(p::LatentProblem) = MvNormal(p.z_obs, isnothing(p.Σ_obs) ? Diagonal(abs2.(p.std_obs)) : p.Σ_obs)
 y_size(p::LatentProblem) = length(p.z_obs)
 
-informed(p::LatentProblem, X::AbstractMatrix) = (p.Q * X)[1:p.k, :]
-simulator(p::LatentProblem) = x -> p.g((p.Q * x)[1:p.k])
+informed(p::LatentProblem, X::AbstractMatrix) = p.P * X
+simulator(p::LatentProblem) = p.sim
 
 function true_loglike(p::LatentProblem, X::AbstractMatrix)
-    Y = reduce(hcat, p.g.(eachcol(informed(p, X))))
+    Y = reduce(hcat, p.sim.(eachcol(X)))
     return isnothing(p.loglike) ? logpdf(obs_distribution(p), Y) : p.loglike.(eachcol(Y))
 end
 
@@ -71,9 +71,4 @@ function gp_priors(p::LatentProblem)
         amplitude_priors = calc_inverse_gamma.(amp ./ 5, amp .* 2),
         noise_std_priors = fill(Dirac(0.), y_size(p)),
     )
-end
-
-function random_rotation(d::Int, seed::Int)
-    Q = Matrix(qr(randn(MersenneTwister(seed), d, d)).Q)
-    return Q
 end

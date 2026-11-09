@@ -145,7 +145,7 @@ latent_dim(m::LatentGP, p::LatentProblem) = something(m.k, p.k)
 latent_dim(::Union{OracleGP, OracleEncoder}, p::LatentProblem) = p.k
 latent_dim(m::LinearEncoder, p::LatentProblem) = something(m.k, p.k)
 projection(::Union{LatentGP, LinearEncoder}, p::LatentProblem) = Matrix(1.0I, p.d, p.d)
-projection(::Union{OracleGP, OracleEncoder}, p::LatentProblem) = p.Q[1:p.k, :]
+projection(::Union{OracleGP, OracleEncoder}, p::LatentProblem) = p.P
 
 max_lengthscale(::Method, p::LatentProblem) = Inf
 max_lengthscale(m::Union{LinearEncoder, OracleEncoder}, p::LatentProblem) = m.cap * 2 * HALF_WIDTH
@@ -177,7 +177,7 @@ end
 surrogate_model(method::Union{LatentGP, LinearEncoder, OracleEncoder}, p::LatentProblem) = latent_model(method, p)
 surrogate_model(method::OracleDSP, p::LatentProblem) = ProjectedGaussianProcess(
     GaussianProcess(; kernel = Matern52Kernel(), gp_priors(p)..., lengthscale_priors = lengthscale_priors(method, p)),
-    p.Q[1:p.k, :],
+    p.P,
 )
 surrogate_model(method::OracleGP, p::LatentProblem) = p.additive ? additive_model(p) : latent_model(method, p)
 
